@@ -335,7 +335,7 @@ export default function App() {
         </button>
         <button onClick={() => setView("tasks")}
           style={{ flex: 1, padding: "8px", borderRadius: 8, border: "0.5px solid #ddd", background: view === "tasks" ? "#f0f0f0" : "none", cursor: "pointer", fontSize: 13 }}>
-          Archaeology tasks
+          Tasks
         </button>
         <button onClick={signOut}
           style={{ padding: "8px 12px", borderRadius: 8, border: "0.5px solid #ddd", background: "none", cursor: "pointer", fontSize: 12, color: "#aaa" }}>
