@@ -55,7 +55,7 @@ export default function App() {
 
   // Load rhythm and task data for context
   useEffect(() => {
-  if (!session?.access_token) return;
+  if (!session?.access_token || typeof session.access_token !== "string") return;
   const headers = {
     apikey: SB_KEY,
     Authorization: `Bearer ${session.access_token}`,
