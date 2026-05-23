@@ -55,31 +55,30 @@ export default function App() {
 
   // Load rhythm and task data for context
   useEffect(() => {
-    if (!session) return;
-    const headers = {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-    };
-    const load = async () => {
-      try {
-        const results = await Promise.allSettled([
-          fetch(`${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`, { headers }),
-          fetch(`${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`, { headers }),
-        ]);
-        const [r1, r2] = results;
-        if (r1.status === "fulfilled" && r1.value.ok) {
-          const d = await r1.value.json();
-          if (d[0]) setRhythmData(JSON.parse(d[0].value));
-        }
-        if (r2.status === "fulfilled" && r2.value.ok) {
-          const d = await r2.value.json();
-          if (d[0]) setTaskData(JSON.parse(d[0].value));
-        }
-      } catch {}
-    };
-    load();
-  }, [session]);
+  if (!session?.access_token) return;
+  const headers = {
+    apikey: SB_KEY,
+    Authorization: `Bearer ${session.access_token}`,
+    "Content-Type": "application/json",
+  };
+  const load = async () => {
+    try {
+      const r1 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`, { headers });
+      if (r1 && r1.ok) {
+        const d = await r1.json();
+        if (d?.[0]) setRhythmData(JSON.parse(d[0].value));
+      }
+    } catch {}
+    try {
+      const r2 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`, { headers });
+      if (r2 && r2.ok) {
+        const d = await r2.json();
+        if (d?.[0]) setTaskData(JSON.parse(d[0].value));
+      }
+    } catch {}
+  };
+  load();
+}, [session]);
 
   const signIn = async () => {
     setSigningIn(true);
