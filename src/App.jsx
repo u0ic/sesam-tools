@@ -255,6 +255,22 @@ export default function App() {
         body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
       });
     }
+    
+    if (action.action === "add_subtask" && taskData) {
+      const newSub = { id: "s" + Date.now(), label: action.label, done: false };
+      const updated = {
+        ...taskData,
+        subtasks: {
+          ...taskData.subtasks,
+          [action.taskId]: [...(taskData.subtasks?.[action.taskId] || []), newSub],
+        },
+      };
+      setTaskData(updated);
+      await fetch(`${SB_URL}/rest/v1/task_store`, {
+        method: "POST", headers,
+        body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
+      });
+    }
   };
 
   if (loading) return (

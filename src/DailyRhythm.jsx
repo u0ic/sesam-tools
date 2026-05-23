@@ -66,13 +66,26 @@ const NEXT_LOGIC = {
 };
 
 function uid() { return "u" + Date.now() + Math.random().toString(36).slice(2, 5); }
-
+function isPast(timeStr, day) {
+  // Only grey out items on today
+  if (day !== todayName()) return false;
+  // Match HH:MM–HH:MM or HH:MM-HH:MM pattern (en dash or hyphen)
+  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
+  if (!match) return false;
+  const endHour = parseInt(match[3], 10);
+  const endMin = parseInt(match[4], 10);
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const endMinutes = endHour * 60 + endMin;
+  return nowMinutes > endMinutes;
+}
 function todayName() {
   return DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
 }
 
 export default function DailyRhythm({ token }) {
   const SB_HEADERS = { apikey: "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb", Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
   const [day, setDay] = useState(todayName());
   const [focuses, setFocuses] = useState(DEFAULT_FOCUSES);
   const [tasks, setTasks] = useState({});
@@ -82,7 +95,18 @@ export default function DailyRhythm({ token }) {
   const [showNext, setShowNext] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("saved");
+  const [, setTick] = useState(0);
   const inputRef = useRef();
+
+  // Check day change and force re-render every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const current = todayName();
+      setDay(d => d === current ? d : current);
+      setTick(t => t + 1);
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -233,16 +257,18 @@ export default function DailyRhythm({ token }) {
           <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>Fixed today</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {fixed.map((f, i) => {
-              const s = KIND_STYLE[f.kind];
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10,
-                  padding: "8px 12px", borderRadius: 8,
-                  background: s.bg, border: "0.5px solid #eee" }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.dot, flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, color: s.text, flex: 1 }}>{f.t}</span>
-                  <span style={{ fontSize: 12, color: s.text, opacity: 0.7 }}>{f.h}</span>
-                </div>
-              );
+                const s = KIND_STYLE[f.kind];
+                const past = isPast(f.h, day);
+                return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 12px", borderRadius: 8,
+                        background: past ? "#f5f5f5" : s.bg, border: "0.5px solid #eee",
+                        opacity: past ? 0.5 : 1, transition: "opacity 0.3s, background 0.3s" }}>
+                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: past ? "#bbb" : s.dot, flexShrink: 0 }} />
+                        <span style={{ fontSize: 13, color: past ? "#999" : s.text, flex: 1, textDecoration: past ? "line-through" : "none" }}>{f.t}</span>
+                        <span style={{ fontSize: 12, color: past ? "#bbb" : s.text, opacity: 0.7 }}>{f.h}</span>
+                    </div>
+                );
             })}
           </div>
         </div>
