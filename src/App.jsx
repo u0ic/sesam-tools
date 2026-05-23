@@ -4,9 +4,6 @@ import TaskManager from "./TaskManager";
 
 const SB_URL = "https://wgiybgncxnovmsyqccbu.supabase.co";
 const SB_KEY = "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb";
-
-// Blue pikmin as inline SVG-ish — we use the uploaded image as a data approach
-// Instead we'll use an emoji placeholder and replace with actual image
 const PIKMIN_IMG = "/pikmin.png";
 
 export default function App() {
@@ -18,28 +15,73 @@ export default function App() {
   const [authError, setAuthError] = useState(null);
   const [signingIn, setSigningIn] = useState(false);
 
-  // Chat state
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [rhythmData, setRhythmData] = useState(null);
   const [taskData, setTaskData] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const chatEndRef = useRef();
   const inputRef = useRef();
 
+  // Restore session from localStorage
   useEffect(() => {
     const stored = localStorage.getItem("sb_session");
     if (stored) {
-      const s = JSON.parse(stored);
-      if (s.expires_at && Date.now() / 1000 < s.expires_at) {
-        setSession(s);
-      } else {
+      try {
+        const s = JSON.parse(stored);
+        if (s?.access_token && s?.expires_at && Date.now() / 1000 < s.expires_at) {
+          setSession(s);
+        } else {
+          localStorage.removeItem("sb_session");
+        }
+      } catch {
         localStorage.removeItem("sb_session");
       }
     }
     setLoading(false);
   }, []);
+
+  // Load rhythm and task data once session is valid
+  useEffect(() => {
+    if (!session?.access_token || typeof session.access_token !== "string") return;
+    setDataLoaded(false);
+
+    const headers = {
+      apikey: SB_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    };
+
+    const load = async () => {
+      try {
+        const r1 = await fetch(
+          `${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`,
+          { headers }
+        );
+        if (r1?.ok) {
+          const d = await r1.json();
+          if (d?.[0]?.value) setRhythmData(JSON.parse(d[0].value));
+        }
+      } catch {}
+
+      try {
+        const r2 = await fetch(
+          `${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`,
+          { headers }
+        );
+        if (r2?.ok) {
+          const d = await r2.json();
+          if (d?.[0]?.value) setTaskData(JSON.parse(d[0].value));
+        }
+      } catch {}
+
+      setDataLoaded(true);
+    };
+
+    load();
+  }, [session]);
 
   useEffect(() => {
     if (chatOpen && inputRef.current) {
@@ -48,37 +90,8 @@ export default function App() {
   }, [chatOpen]);
 
   useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
-
-  // Load rhythm and task data for context
-  useEffect(() => {
-  if (!session?.access_token || typeof session.access_token !== "string") return;
-  const headers = {
-    apikey: SB_KEY,
-    Authorization: `Bearer ${session.access_token}`,
-    "Content-Type": "application/json",
-  };
-  const load = async () => {
-    try {
-      const r1 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`, { headers });
-      if (r1 && r1.ok) {
-        const d = await r1.json();
-        if (d?.[0]) setRhythmData(JSON.parse(d[0].value));
-      }
-    } catch {}
-    try {
-      const r2 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`, { headers });
-      if (r2 && r2.ok) {
-        const d = await r2.json();
-        if (d?.[0]) setTaskData(JSON.parse(d[0].value));
-      }
-    } catch {}
-  };
-  load();
-}, [session]);
 
   const signIn = async () => {
     setSigningIn(true);
@@ -102,11 +115,19 @@ export default function App() {
     setSigningIn(false);
   };
 
-  const signOut = () => { localStorage.removeItem("sb_session"); setSession(null); };
+  const signOut = () => {
+    localStorage.removeItem("sb_session");
+    setSession(null);
+    setRhythmData(null);
+    setTaskData(null);
+    setMessages([]);
+    setDataLoaded(false);
+  };
 
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || thinking) return;
+
     const userMsg = { role: "user", content: text };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -114,7 +135,7 @@ export default function App() {
     setThinking(true);
 
     try {
-      const res = await console.log("Sending data:", { rhythmData, taskData }); fetch("/api/chat", {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -128,9 +149,14 @@ export default function App() {
       });
 
       const data = await res.json();
-      const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
 
-      // Parse update blocks
+      if (!res.ok) {
+        setMessages(m => [...m, { role: "assistant", content: `Error ${res.status}: ${data.error || "something went wrong"}` }]);
+        setThinking(false);
+        return;
+      }
+
+      const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
       const updateMatch = raw.match(/```update\n([\s\S]*?)```/);
       const responseText = raw.replace(/```update\n[\s\S]*?```/, "").trim();
 
@@ -140,18 +166,16 @@ export default function App() {
         try {
           const action = JSON.parse(updateMatch[1]);
           await applyAction(action);
-        } catch {
-          console.error("Error parsing update block:", e);
-        }
+        } catch {}
       }
     } catch (e) {
-      setMessages(m => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
+      setMessages(m => [...m, { role: "assistant", content: `Network error: ${e.message}` }]);
     }
+
     setThinking(false);
   };
 
   const applyAction = async (action) => {
-    if (!taskData && !rhythmData) return;
     const headers = {
       apikey: SB_KEY,
       Authorization: `Bearer ${session.access_token}`,
@@ -164,7 +188,7 @@ export default function App() {
         ...taskData,
         subtasks: {
           ...taskData.subtasks,
-          [action.taskId]: (taskData.subtasks[action.taskId] || []).map(s =>
+          [action.taskId]: (taskData.subtasks?.[action.taskId] || []).map(s =>
             s.id === action.subtaskId ? { ...s, done: true } : s
           ),
         },
@@ -196,10 +220,18 @@ export default function App() {
     }
 
     if (action.action === "add_task" && taskData) {
-      const newTask = { id: "t" + Date.now(), label: action.label, detail: action.detail || "", role: action.role || "Other", deadline: action.deadline || "" };
+      const newTask = {
+        id: "t" + Date.now(),
+        label: action.label,
+        detail: action.detail || "",
+        role: action.role || "Other",
+        deadline: action.deadline || "",
+      };
       const updated = {
         ...taskData,
-        phases: taskData.phases.map(p => p.id === action.phaseId ? { ...p, tasks: [...p.tasks, newTask] } : p),
+        phases: taskData.phases.map(p =>
+          p.id === action.phaseId ? { ...p, tasks: [...p.tasks, newTask] } : p
+        ),
       };
       setTaskData(updated);
       await fetch(`${SB_URL}/rest/v1/task_store`, {
@@ -209,7 +241,9 @@ export default function App() {
     }
   };
 
-  if (loading) return <div style={{ padding: "2rem", fontSize: 14, color: "#888" }}>Loading…</div>;
+  if (loading) return (
+    <div style={{ padding: "2rem", fontSize: 14, color: "#888" }}>Loading…</div>
+  );
 
   if (!session) return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 1rem", fontFamily: "sans-serif" }}>
@@ -249,7 +283,9 @@ export default function App() {
         </button>
       </div>
 
-      {view === "rhythm" ? <DailyRhythm token={session.access_token} /> : <TaskManager token={session.access_token} />}
+      {view === "rhythm"
+        ? <DailyRhythm token={session.access_token} />
+        : <TaskManager token={session.access_token} />}
 
       {/* Floating pikmin button */}
       <button onClick={() => setChatOpen(o => !o)}
@@ -263,19 +299,25 @@ export default function App() {
           {/* Header */}
           <div style={{ padding: "12px 16px", borderBottom: "0.5px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 13, fontWeight: 500 }}>Sesam</span>
-            <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 16 }}>✕</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {!dataLoaded && <span style={{ fontSize: 11, color: "#aaa" }}>Loading data…</span>}
+              {dataLoaded && <span style={{ fontSize: 11, color: "#1a7a45" }}>✓ Data ready</span>}
+              <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 16 }}>✕</button>
+            </div>
           </div>
 
           {/* Messages */}
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
             {messages.length === 0 && (
               <p style={{ fontSize: 13, color: "#aaa", margin: 0, lineHeight: 1.6 }}>
-                Hi. I have your full task and rhythm data. Tell me what's going on or ask what to do next.
+                {dataLoaded
+                  ? "Hi. I have your full task and rhythm data. Tell me what's going on or ask what to do next."
+                  : "Loading your data…"}
               </p>
             )}
             {messages.map((m, i) => (
               <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-                <div style={{ maxWidth: "82%", padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.6, background: m.role === "user" ? "#111" : "#f0f0f0", color: m.role === "user" ? "#fff" : "#111", borderBottomRightRadius: m.role === "user" ? 4 : 12, borderBottomLeftRadius: m.role === "assistant" ? 4 : 12 }}>
+                <div style={{ maxWidth: "82%", padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.6, background: m.role === "user" ? "#111" : "#f0f0f0", color: m.role === "user" ? "#fff" : "#111", borderBottomRightRadius: m.role === "user" ? 4 : 12, borderBottomLeftRadius: m.role === "assistant" ? 4 : 12, whiteSpace: "pre-wrap" }}>
                   {m.content}
                 </div>
               </div>
@@ -292,10 +334,11 @@ export default function App() {
           <div style={{ padding: "10px 12px", borderTop: "0.5px solid #eee", display: "flex", gap: 8 }}>
             <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-              placeholder="Ask Sesam…"
-              style={{ flex: 1, fontSize: 13, padding: "7px 10px", borderRadius: 8, border: "0.5px solid #ddd", background: "#fff" }} />
-            <button onClick={sendMessage} disabled={thinking}
-              style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#111", color: "#fff", cursor: "pointer", fontSize: 13 }}>↑</button>
+              placeholder={dataLoaded ? "Ask Sesam…" : "Loading…"}
+              disabled={!dataLoaded}
+              style={{ flex: 1, fontSize: 13, padding: "7px 10px", borderRadius: 8, border: "0.5px solid #ddd", background: "#fff", opacity: dataLoaded ? 1 : 0.5 }} />
+            <button onClick={sendMessage} disabled={thinking || !dataLoaded}
+              style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#111", color: "#fff", cursor: "pointer", fontSize: 13, opacity: dataLoaded ? 1 : 0.5 }}>↑</button>
           </div>
         </div>
       )}
