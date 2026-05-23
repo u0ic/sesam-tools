@@ -74,7 +74,7 @@ export default function App() {
       }
     };
     load();
-  }, [session, chatOpen]);
+  }, [session]);
 
   const signIn = async () => {
     setSigningIn(true);
@@ -110,7 +110,7 @@ export default function App() {
     setThinking(true);
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await console.log("Sending data:", { rhythmData, taskData }); fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
