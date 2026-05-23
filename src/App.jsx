@@ -168,9 +168,8 @@ export default function App() {
       }
 
       const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
-      const updateMatches = [...raw.matchAll(/```update\n([\s\S]*?)```/g)];
-      const responseText = raw.replace(/```update\n[\s\S]*?```/g, "").trim();
-      setMessages(m => [...m, { role: "assistant", content: responseText }]);
+      const updateMatches = [...raw.matchAll(/```update\s*([\s\S]*?)\s*```/g)];
+      const responseText = raw.replace(/```update\s*[\s\S]*?\s*```/g, "").trim();      setMessages(m => [...m, { role: "assistant", content: responseText }]);
       const finalMessages = [...newMessages, { role: "assistant", content: responseText }];
       try {
         await fetch(`${SB_URL}/rest/v1/task_store`, {
