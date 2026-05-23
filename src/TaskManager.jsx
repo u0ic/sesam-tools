@@ -1,12 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 
 const SB_URL = "https://wgiybgncxnovmsyqccbu.supabase.co";
-const SB_KEY = "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb";
-const SB_HEADERS = {
-  apikey: SB_KEY,
-  Authorization: `Bearer ${SB_KEY}`,
-  "Content-Type": "application/json",
-};
+
 const STORE_KEY = "arch_task_state_v3";
 
 const INIT_PHASES = [
@@ -118,7 +113,8 @@ function SubtaskRow({ sub, onToggle, onDelete, onRename }) {
   );
 }
 
-export default function TaskManager() {
+export default function TaskManager({ token }) {  
+  const SB_HEADERS = { apikey: "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb", Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const [phases, setPhases] = useState(INIT_PHASES);
   const [statuses, setStatuses] = useState({});
   const [notes, setNotes] = useState({});

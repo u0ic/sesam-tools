@@ -1,12 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 
 const SB_URL = "https://wgiybgncxnovmsyqccbu.supabase.co";
-const SB_KEY = "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb";
-const SB_HEADERS = {
-  apikey: SB_KEY,
-  Authorization: `Bearer ${SB_KEY}`,
-  "Content-Type": "application/json",
-};
+
 const STORE_KEY = "rhythm_v1";
 
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -76,7 +71,8 @@ function todayName() {
   return DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
 }
 
-export default function DailyRhythm() {
+export default function DailyRhythm({ token }) {
+  const SB_HEADERS = { apikey: "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb", Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const [day, setDay] = useState(todayName());
   const [focuses, setFocuses] = useState(DEFAULT_FOCUSES);
   const [tasks, setTasks] = useState({});
