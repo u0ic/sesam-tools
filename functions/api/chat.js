@@ -5,62 +5,42 @@ export async function onRequestPost(context) {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
+      status: 401, headers: { "Content-Type": "application/json" },
     });
   }
 
-  // Verify the token with Supabase
   const token = authHeader.replace("Bearer ", "");
   const userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: env.SUPABASE_ANON_KEY,
-    },
+    headers: { Authorization: `Bearer ${token}`, apikey: env.SUPABASE_ANON_KEY },
   });
-
   if (!userRes.ok) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
+      status: 401, headers: { "Content-Type": "application/json" },
     });
   }
 
-  // Parse the request body
-  const { messages, rhythmData, taskData } = await request.json();
+  const { messages, rhythmData, taskData, profile, locations, projects } = await request.json();
 
-  // Build system prompt with full context
-  const systemPrompt = `You are Sesam, a personal assistant embedded in a daily rhythm and task management tool. You know the user well:
+  const now = new Date().toLocaleString("en-GB", {
+    timeZone: "Europe/Berlin",
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
 
-ABOUT THE USER:
-- Name not specified but you know them through ongoing conversation
-- Mathematics student, previously studied cultural studies at Goldsmiths and art history at CUHK
-- Works part-time at Max Planck Institute for the History of Science (MPIWG) as assistant to Dagmar Schäfer
-- Agreed to do a PhD on how archaeology as a form of knowledge production evolved in 20th/21st century China
-- Runs a collective project space in Berlin called GelisPark (Liegnitzer Str, Kreuzberg)
-- Has chronic depression and ADHD — difficulty with task initiation, hyperfocus, time blindness
-- Lives near Treptower Park, Berlin
-- Partner lives with them, works three jobs, has anxiety
-- Cat named Wangwang (王佩瑜), a 三花猫 with 异瞳 — calico with heterochromia
-- Plays Pikmin Bloom with partner
-- Sleep pattern: bed around 2-3am, wakes around 11am
-- Works best in long uninterrupted sessions; first 10-15 min feel resistant
+  const systemPrompt = `You are Sesam, a personal assistant embedded in a daily rhythm and task management tool.
 
-CURRENT WEEK STRUCTURE:
-- Monday: MPIWG + commute (~8hrs), Topology/ML class
-- Tuesday: Topology/ML class — best deep work day
-- Wednesday: Topology/ML class + Zoom seminar (2hrs)
-- Thursday: MPIWG + commute (~8hrs), Butoh 20:00-22:00
-- Friday: MPIWG + commute (~8hrs)
-- Saturday: GelisPark, Flexibility class 14:30-15:30 (Falckenstein Str)
-- Sunday: GelisPark — best morning for PhD writing
+CURRENT DATE AND TIME:
+- Now: ${now}
+- Berlin time
 
-IMMEDIATE DEADLINES:
-- Mon May 26: Working draft of both PhD case studies to Schäfer
-  - Wang Shixian Family Cemetery: argument about fragmented 1972-1990 excavation as epistemic/political filter
-  - Liu Heima Family Cemetery: argument about molecular analysis selection as knowledge production
-- Mid June: Puppetry project proposal + database tracking system
-- End of June: Final draft of both case studies + full dataset explanation for DH
+PROFILE (who the user is, stable context):
+${profile || "(not yet provided)"}
+
+LOCATIONS (addresses the user moves between):
+${locations || "(not yet provided)"}
+
+ONGOING PROJECTS:
+${projects || "(not yet provided)"}
 
 CURRENT RHYTHM DATA:
 ${JSON.stringify(rhythmData, null, 2)}
@@ -71,7 +51,7 @@ ${JSON.stringify(taskData, null, 2)}
 YOUR ROLE:
 - Help prioritize and make decisions about what to do next
 - Be honest about load and tradeoffs — don't just validate
-- Update tasks and rhythm data when explicitly asked to
+- Update data when explicitly asked to
 - When you need to make a data change, end your response with a JSON block in this exact format:
 
 \`\`\`update
@@ -86,17 +66,25 @@ Supported actions:
 - complete_subtask: { action, taskId, subtaskId }
 - set_task_status: { action, taskId, status } (status: "Not started"|"In progress"|"Blocked"|"Done")
 - complete_care: { action, day, care } (care: exact care anchor label)
-- add_arch_task: { action, phaseId, label, detail, role, deadline } — for archaeology PhD work only
-- add_rhythm_task: { action, day, label } — for general daily tasks (meetings, errands, anything tied to a specific weekday)
-- add_subtask: { action, taskId, label }
+- add_arch_task: { action, phaseId, label, detail, role, deadline } — for PhD archaeology work only
+- add_rhythm_task: { action, day, label } — for general daily tasks (meetings, errands)
+- add_subtask: { action, taskId, label } — add a subtask to an existing archaeology task
+- update_profile: { action, content } — replace the profile text
+- update_locations: { action, content } — replace the locations text
+- update_projects: { action, content } — replace the projects text
 
-CRITICAL: If the user asks you to add something to their day or rhythm (meetings, calls, errands, etc), use add_rhythm_task. Only use add_arch_task for archaeology PhD work. Always emit the update block when the user asks you to make a change.
+If asked about commute time between two locations, use the get_commute function (you can request a commute calculation by ending your message with):
 
-Only include the update block when the user explicitly asks you to make a change. Otherwise just advise.
+\`\`\`commute
+{ "from": "Home", "to": "MPIWG" }
+\`\`\`
 
-Tone: warm, direct, honest. Same register as a trusted colleague who knows you well. Not a cheerleader. Not a therapist. Just someone who sees clearly and tells you what they think.`;
+The user's app will calculate the real commute time and tell you in the next message. Use the exact location labels from the LOCATIONS section.
 
-  // Call Anthropic API
+When emitting multiple update blocks, write each one separately. The user's app will execute all of them.
+
+Tone: warm, direct, honest. Same register as a trusted colleague who knows you well. Not a cheerleader. Not a therapist.`;
+
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -116,14 +104,12 @@ Tone: warm, direct, honest. Same register as a trusted colleague who knows you w
     const err = await anthropicRes.text();
     console.error("Anthropic error:", anthropicRes.status, err);
     return new Response(JSON.stringify({ error: err, status: anthropicRes.status }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+      status: 500, headers: { "Content-Type": "application/json" },
     });
   }
 
   const data = await anthropicRes.json();
   return new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
+    status: 200, headers: { "Content-Type": "application/json" },
   });
 }

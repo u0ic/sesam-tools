@@ -6,8 +6,37 @@ const SB_URL = "https://wgiybgncxnovmsyqccbu.supabase.co";
 const SB_KEY = "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb";
 const PIKMIN_IMG = "/pikmin.png";
 
+const DEFAULT_PROFILE = `Mathematics student, previously studied cultural studies at Goldsmiths and art history at CUHK.
+Works part-time at MPIWG as assistant to Dagmar Schäfer (Mon, Thu, Fri).
+Agreed to do a PhD on how archaeology as a form of knowledge production evolved in 20th/21st century China.
+Runs a collective project space in Berlin called GelisPark.
+Has chronic depression and ADHD — difficulty with task initiation, hyperfocus, time blindness.
+Partner lives with them, works three jobs, has anxiety.
+Cat named Wangwang (王佩瑜), a 三花猫 with 异瞳.
+Plays Pikmin Bloom with partner.
+Sleep pattern: bed around 2-3am, wakes around 11am. Wants to improve this gradually.
+Works best in long uninterrupted sessions; first 10-15 min feel resistant.`;
+
+const DEFAULT_LOCATIONS = `Home: Treptower Park, Berlin
+MPIWG: Boltzmannstraße 22, 14195 Berlin
+GelisPark: Liegnitzer Str, 10999 Berlin
+Flexibility class: Falckenstein Str, 10997 Berlin`;
+
+const DEFAULT_PROJECTS = `PhD case studies for Dagmar Schäfer:
+- Wang Shixian Family Cemetery — argument about fragmented 1972-1990 excavation as epistemic/political filter
+- Liu Heima Family Cemetery — argument about molecular analysis selection as knowledge production
+- Working draft due: Mon May 26
+- Final draft + dataset explanation due: End of June
+
+Puppetry project proposal — open call, due Mid June
+
+Database tracking system — for DH collaboration, due Mid June
+
+GelisPark — ongoing collective space, requires weekend attention`;
+
 export default function App() {
   const [view, setView] = useState("rhythm");
+  const [contextSubtab, setContextSubtab] = useState("profile");
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
@@ -21,11 +50,18 @@ export default function App() {
   const [thinking, setThinking] = useState(false);
   const [rhythmData, setRhythmData] = useState(null);
   const [taskData, setTaskData] = useState(null);
+  const [profile, setProfile] = useState("");
+  const [locations, setLocations] = useState("");
+  const [projects, setProjects] = useState("");
+  const [contextSaveStatus, setContextSaveStatus] = useState("saved");
   const [dataLoaded, setDataLoaded] = useState(false);
   const chatEndRef = useRef();
   const inputRef = useRef();
+  const profileSaveTimer = useRef();
+  const locationsSaveTimer = useRef();
+  const projectsSaveTimer = useRef();
 
-  // Restore session from localStorage
+  // Restore session
   useEffect(() => {
     const stored = localStorage.getItem("sb_session");
     if (stored) {
@@ -36,14 +72,12 @@ export default function App() {
         } else {
           localStorage.removeItem("sb_session");
         }
-      } catch {
-        localStorage.removeItem("sb_session");
-      }
+      } catch { localStorage.removeItem("sb_session"); }
     }
     setLoading(false);
   }, []);
 
-  // Load rhythm, task and chat data once session is valid
+  // Load all data once session is valid
   useEffect(() => {
     if (!session?.access_token || typeof session.access_token !== "string") return;
     setDataLoaded(false);
@@ -54,31 +88,44 @@ export default function App() {
       "Content-Type": "application/json",
     };
 
+    const loadOne = async (key, setter, fallback) => {
+      try {
+        const r = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.${key}&select=value`, { headers });
+        if (r?.ok) {
+          const d = await r.json();
+          if (d?.[0]?.value) {
+            const parsed = JSON.parse(d[0].value);
+            setter(parsed);
+            return;
+          }
+        }
+      } catch {}
+      if (fallback !== undefined) setter(fallback);
+    };
+
+    const loadString = async (key, setter, fallback) => {
+      try {
+        const r = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.${key}&select=value`, { headers });
+        if (r?.ok) {
+          const d = await r.json();
+          if (d?.[0]?.value) {
+            setter(d[0].value);
+            return;
+          }
+        }
+      } catch {}
+      if (fallback !== undefined) setter(fallback);
+    };
+
     const load = async () => {
-      try {
-        const r1 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`, { headers });
-        if (r1?.ok) {
-          const d = await r1.json();
-          if (d?.[0]?.value) setRhythmData(JSON.parse(d[0].value));
-        }
-      } catch {}
-
-      try {
-        const r2 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`, { headers });
-        if (r2?.ok) {
-          const d = await r2.json();
-          if (d?.[0]?.value) setTaskData(JSON.parse(d[0].value));
-        }
-      } catch {}
-
-      try {
-        const r3 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1&select=value`, { headers });
-        if (r3?.ok) {
-          const d = await r3.json();
-          if (d?.[0]?.value) setMessages(JSON.parse(d[0].value));
-        }
-      } catch {}
-
+      await Promise.all([
+        loadOne("rhythm_v1", setRhythmData),
+        loadOne("arch_task_state_v3", setTaskData),
+        loadOne("chat_messages_v1", setMessages),
+        loadString("context_profile_v1", setProfile, DEFAULT_PROFILE),
+        loadString("context_locations_v1", setLocations, DEFAULT_LOCATIONS),
+        loadString("context_projects_v1", setProjects, DEFAULT_PROJECTS),
+      ]);
       setDataLoaded(true);
     };
 
@@ -94,6 +141,42 @@ export default function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
+
+  // Save context text with debounce
+  const saveContextField = async (key, value) => {
+    setContextSaveStatus("saving");
+    try {
+      const res = await fetch(`${SB_URL}/rest/v1/task_store`, {
+        method: "POST",
+        headers: {
+          apikey: SB_KEY,
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({ key, value, updated_at: new Date().toISOString() }),
+      });
+      setContextSaveStatus(res.ok ? "saved" : "error");
+    } catch { setContextSaveStatus("error"); }
+  };
+
+  const onProfileChange = (val) => {
+    setProfile(val);
+    clearTimeout(profileSaveTimer.current);
+    profileSaveTimer.current = setTimeout(() => saveContextField("context_profile_v1", val), 800);
+  };
+
+  const onLocationsChange = (val) => {
+    setLocations(val);
+    clearTimeout(locationsSaveTimer.current);
+    locationsSaveTimer.current = setTimeout(() => saveContextField("context_locations_v1", val), 800);
+  };
+
+  const onProjectsChange = (val) => {
+    setProjects(val);
+    clearTimeout(projectsSaveTimer.current);
+    projectsSaveTimer.current = setTimeout(() => saveContextField("context_projects_v1", val), 800);
+  };
 
   const signIn = async () => {
     setSigningIn(true);
@@ -111,9 +194,7 @@ export default function App() {
         localStorage.setItem("sb_session", JSON.stringify(data));
         setSession(data);
       }
-    } catch {
-      setAuthError("Network error — check your connection");
-    }
+    } catch { setAuthError("Network error — check your connection"); }
     setSigningIn(false);
   };
 
@@ -123,11 +204,13 @@ export default function App() {
     setRhythmData(null);
     setTaskData(null);
     setMessages([]);
+    setProfile("");
+    setLocations("");
+    setProjects("");
     setDataLoaded(false);
   };
 
-  // Pure function: takes current state + action, returns new state.
-  // Does NOT touch React state or Supabase directly.
+  // Pure action computation
   const applyAction = (action, currentTask, currentRhythm) => {
     let newTask = currentTask;
     let newRhythm = currentRhythm;
@@ -143,23 +226,18 @@ export default function App() {
         },
       };
     }
-
     if (action.action === "set_task_status" && currentTask) {
       newTask = { ...currentTask, statuses: { ...currentTask.statuses, [action.taskId]: action.status } };
     }
-
     if (action.action === "complete_care" && currentRhythm) {
       const key = `${action.day}:${action.care}`;
       newRhythm = { ...currentRhythm, careDone: { ...currentRhythm.careDone, [key]: true } };
     }
-
     if (action.action === "add_arch_task" && currentTask) {
       const newTaskItem = {
         id: "t" + Date.now() + Math.random().toString(36).slice(2, 5),
-        label: action.label,
-        detail: action.detail || "",
-        role: action.role || "Other",
-        deadline: action.deadline || "",
+        label: action.label, detail: action.detail || "",
+        role: action.role || "Other", deadline: action.deadline || "",
       };
       newTask = {
         ...currentTask,
@@ -168,7 +246,6 @@ export default function App() {
         ),
       };
     }
-
     if (action.action === "add_rhythm_task" && currentRhythm) {
       const newRhythmTask = {
         id: "u" + Date.now() + Math.random().toString(36).slice(2, 5),
@@ -176,18 +253,13 @@ export default function App() {
       };
       newRhythm = {
         ...currentRhythm,
-        tasks: {
-          ...currentRhythm.tasks,
-          [action.day]: [...(currentRhythm.tasks?.[action.day] || []), newRhythmTask],
-        },
+        tasks: { ...currentRhythm.tasks, [action.day]: [...(currentRhythm.tasks?.[action.day] || []), newRhythmTask] },
       };
     }
-
     if (action.action === "add_subtask" && currentTask) {
       const newSub = {
         id: "s" + Date.now() + Math.random().toString(36).slice(2, 5),
-        label: action.label,
-        done: false,
+        label: action.label, done: false,
       };
       newTask = {
         ...currentTask,
@@ -201,14 +273,52 @@ export default function App() {
     return { newTask, newRhythm };
   };
 
-  const sendMessage = async () => {
-    const text = input.trim();
+  // Resolve a location label to an actual address by parsing the locations text
+  const resolveLocation = (label) => {
+    if (!locations) return label;
+    const lines = locations.split("\n");
+    for (const line of lines) {
+      const match = line.match(/^([^:]+):\s*(.+)$/);
+      if (match && match[1].trim().toLowerCase() === label.toLowerCase()) {
+        return match[2].trim();
+      }
+    }
+    return label; // fall back to literal label
+  };
+
+  // Make a commute API call and return formatted result
+  const calculateCommute = async (fromLabel, toLabel, mode = "transit") => {
+    const origin = resolveLocation(fromLabel);
+    const destination = resolveLocation(toLabel);
+    try {
+      const res = await fetch("/api/commute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ origin, destination, mode }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        return `Commute lookup failed: ${err.error}`;
+      }
+      const data = await res.json();
+      return `Commute from ${fromLabel} to ${toLabel} by ${data.mode}: ${data.duration} (${data.distance})`;
+    } catch (e) {
+      return `Commute lookup error: ${e.message}`;
+    }
+  };
+
+  const sendMessage = async (overrideText) => {
+    const text = (overrideText !== undefined ? overrideText : input).trim();
     if (!text || thinking) return;
 
     const userMsg = { role: "user", content: text };
     const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
-    setInput("");
+    if (overrideText === undefined) setMessages(newMessages);
+    else setMessages(newMessages);
+    if (overrideText === undefined) setInput("");
     setThinking(true);
 
     try {
@@ -220,13 +330,12 @@ export default function App() {
         },
         body: JSON.stringify({
           messages: newMessages,
-          rhythmData,
-          taskData,
+          rhythmData, taskData,
+          profile, locations, projects,
         }),
       });
 
       const data = await res.json();
-
       if (!res.ok) {
         setMessages(m => [...m, { role: "assistant", content: `Error ${res.status}: ${data.error || "something went wrong"}` }]);
         setThinking(false);
@@ -234,13 +343,22 @@ export default function App() {
       }
 
       const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
+
+      // Extract commute requests
+      const commuteMatches = [...raw.matchAll(/```commute\s*([\s\S]*?)\s*```/g)];
+
+      // Extract update blocks
       const updateMatches = [...raw.matchAll(/```update\s*([\s\S]*?)\s*```/g)];
-      const responseText = raw.replace(/```update\s*[\s\S]*?\s*```/g, "").trim();
+
+      // Strip both kinds of blocks from visible text
+      const responseText = raw
+        .replace(/```update\s*[\s\S]*?\s*```/g, "")
+        .replace(/```commute\s*[\s\S]*?\s*```/g, "")
+        .trim();
 
       setMessages(m => [...m, { role: "assistant", content: responseText }]);
       const finalMessages = [...newMessages, { role: "assistant", content: responseText }];
 
-      // Persist chat history
       try {
         await fetch(`${SB_URL}/rest/v1/task_store`, {
           method: "POST",
@@ -258,7 +376,7 @@ export default function App() {
         });
       } catch {}
 
-      // Apply all update blocks by chaining through local variables
+      // Apply update actions
       if (updateMatches.length > 0) {
         let workingTask = taskData;
         let workingRhythm = rhythmData;
@@ -266,6 +384,24 @@ export default function App() {
         for (const match of updateMatches) {
           try {
             const action = JSON.parse(match[1]);
+
+            // Context updates (handle separately, they're string replacements)
+            if (action.action === "update_profile") {
+              setProfile(action.content);
+              saveContextField("context_profile_v1", action.content);
+              continue;
+            }
+            if (action.action === "update_locations") {
+              setLocations(action.content);
+              saveContextField("context_locations_v1", action.content);
+              continue;
+            }
+            if (action.action === "update_projects") {
+              setProjects(action.content);
+              saveContextField("context_projects_v1", action.content);
+              continue;
+            }
+
             const result = applyAction(action, workingTask, workingRhythm);
             workingTask = result.newTask;
             workingRhythm = result.newRhythm;
@@ -286,7 +422,6 @@ export default function App() {
             body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(workingTask), updated_at: new Date().toISOString() }),
           });
         }
-
         if (workingRhythm !== rhythmData) {
           setRhythmData(workingRhythm);
           await fetch(`${SB_URL}/rest/v1/task_store`, {
@@ -295,6 +430,25 @@ export default function App() {
           });
         }
       }
+
+      // Handle commute requests by sending results back to Sesam
+      if (commuteMatches.length > 0) {
+        setThinking(false);
+        const commuteResults = [];
+        for (const match of commuteMatches) {
+          try {
+            const req = JSON.parse(match[1]);
+            const result = await calculateCommute(req.from, req.to, req.mode);
+            commuteResults.push(result);
+          } catch (e) {
+            commuteResults.push(`Could not parse commute request: ${e.message}`);
+          }
+        }
+        // Send results back as a follow-up user message
+        const followUp = "Commute info:\n" + commuteResults.join("\n");
+        await sendMessage(followUp);
+        return;
+      }
     } catch (e) {
       setMessages(m => [...m, { role: "assistant", content: `Network error: ${e.message}` }]);
     }
@@ -302,9 +456,7 @@ export default function App() {
     setThinking(false);
   };
 
-  if (loading) return (
-    <div style={{ padding: "2rem", fontSize: 14, color: "#888" }}>Loading…</div>
-  );
+  if (loading) return <div style={{ padding: "2rem", fontSize: 14, color: "#888" }}>Loading…</div>;
 
   if (!session) return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 1rem", fontFamily: "sans-serif" }}>
@@ -326,16 +478,23 @@ export default function App() {
     </div>
   );
 
+  const contextCurrent = contextSubtab === "profile" ? profile : contextSubtab === "locations" ? locations : projects;
+  const contextHandler = contextSubtab === "profile" ? onProfileChange : contextSubtab === "locations" ? onLocationsChange : onProjectsChange;
+
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", padding: "1rem", fontFamily: "sans-serif" }}>
       <div style={{ display: "flex", gap: 8, marginBottom: "1.5rem", alignItems: "center" }}>
         <button onClick={() => setView("rhythm")}
           style={{ flex: 1, padding: "8px", borderRadius: 8, border: "0.5px solid #ddd", background: view === "rhythm" ? "#f0f0f0" : "none", cursor: "pointer", fontSize: 13 }}>
-          Daily rhythm
+          Rhythm
         </button>
         <button onClick={() => setView("tasks")}
           style={{ flex: 1, padding: "8px", borderRadius: 8, border: "0.5px solid #ddd", background: view === "tasks" ? "#f0f0f0" : "none", cursor: "pointer", fontSize: 13 }}>
           Tasks
+        </button>
+        <button onClick={() => setView("context")}
+          style={{ flex: 1, padding: "8px", borderRadius: 8, border: "0.5px solid #ddd", background: view === "context" ? "#f0f0f0" : "none", cursor: "pointer", fontSize: 13 }}>
+          Context
         </button>
         <button onClick={signOut}
           style={{ padding: "8px 12px", borderRadius: 8, border: "0.5px solid #ddd", background: "none", cursor: "pointer", fontSize: 12, color: "#aaa" }}>
@@ -343,9 +502,44 @@ export default function App() {
         </button>
       </div>
 
-      {view === "rhythm"
-        ? <DailyRhythm token={session.access_token} />
-        : <TaskManager token={session.access_token} />}
+      {view === "rhythm" && <DailyRhythm token={session.access_token} />}
+      {view === "tasks" && <TaskManager token={session.access_token} />}
+      {view === "context" && (
+        <div style={{ padding: "1rem 0" }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: "1rem" }}>
+            {["profile","locations","projects"].map(sub => (
+              <button key={sub} onClick={() => setContextSubtab(sub)}
+                style={{ flex: 1, padding: "6px", fontSize: 12, borderRadius: 8,
+                  border: contextSubtab === sub ? "0.5px solid #333" : "0.5px solid #ddd",
+                  background: contextSubtab === sub ? "#f0f0f0" : "none",
+                  color: contextSubtab === sub ? "#111" : "#888",
+                  cursor: "pointer", textTransform: "capitalize" }}>
+                {sub}
+              </button>
+            ))}
+          </div>
+
+          <p style={{ fontSize: 11, color: "#aaa", marginBottom: 8, lineHeight: 1.5 }}>
+            {contextSubtab === "profile" && "Stable things about your life. Sesam reads this with every message."}
+            {contextSubtab === "locations" && "Use 'Label: Address' format on each line. Sesam uses these for real commute calculations."}
+            {contextSubtab === "projects" && "Ongoing projects and their key deadlines. Update as things shift."}
+          </p>
+
+          <textarea
+            value={contextCurrent}
+            onChange={e => contextHandler(e.target.value)}
+            placeholder={`Edit your ${contextSubtab}…`}
+            style={{
+              width: "100%", minHeight: 400, fontSize: 13, lineHeight: 1.6,
+              padding: "12px 14px", borderRadius: 10, border: "0.5px solid #ddd",
+              fontFamily: "inherit", resize: "vertical", boxSizing: "border-box",
+            }} />
+
+          <p style={{ fontSize: 11, color: "#bbb", textAlign: "right", marginTop: 8 }}>
+            {contextSaveStatus === "saving" ? "Saving…" : contextSaveStatus === "error" ? "⚠ Save failed" : "✓ Saved"}
+          </p>
+        </div>
+      )}
 
       <button onClick={() => setChatOpen(o => !o)}
         style={{ position: "fixed", bottom: 24, right: 24, width: 56, height: 56, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", padding: 0, zIndex: 50 }}>
@@ -357,18 +551,15 @@ export default function App() {
           <div style={{ padding: "12px 16px", borderBottom: "0.5px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 13, fontWeight: 500 }}>Sesam</span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {!dataLoaded && <span style={{ fontSize: 11, color: "#aaa" }}>Loading data…</span>}
-              {dataLoaded && <span style={{ fontSize: 11, color: "#1a7a45" }}>✓ Data ready</span>}
+              {!dataLoaded && <span style={{ fontSize: 11, color: "#aaa" }}>Loading…</span>}
+              {dataLoaded && <span style={{ fontSize: 11, color: "#1a7a45" }}>✓ Ready</span>}
               <button onClick={async () => {
                 if (!confirm("Clear conversation history?")) return;
                 setMessages([]);
                 try {
                   await fetch(`${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1`, {
                     method: "DELETE",
-                    headers: {
-                      apikey: SB_KEY,
-                      Authorization: `Bearer ${session.access_token}`,
-                    },
+                    headers: { apikey: SB_KEY, Authorization: `Bearer ${session.access_token}` },
                   });
                 } catch {}
               }} style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 11 }}>Clear</button>
@@ -379,9 +570,7 @@ export default function App() {
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
             {messages.length === 0 && (
               <p style={{ fontSize: 13, color: "#aaa", margin: 0, lineHeight: 1.6 }}>
-                {dataLoaded
-                  ? "Hi. I have your full task and rhythm data. Tell me what's going on or ask what to do next."
-                  : "Loading your data…"}
+                {dataLoaded ? "Hi. I have your context, rhythm, and tasks. What's going on?" : "Loading…"}
               </p>
             )}
             {messages.map((m, i) => (
@@ -405,7 +594,7 @@ export default function App() {
               placeholder={dataLoaded ? "Ask Sesam…" : "Loading…"}
               disabled={!dataLoaded}
               style={{ flex: 1, fontSize: 13, padding: "7px 10px", borderRadius: 8, border: "0.5px solid #ddd", background: "#fff", opacity: dataLoaded ? 1 : 0.5 }} />
-            <button onClick={sendMessage} disabled={thinking || !dataLoaded}
+            <button onClick={() => sendMessage()} disabled={thinking || !dataLoaded}
               style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#111", color: "#fff", cursor: "pointer", fontSize: 13, opacity: dataLoaded ? 1 : 0.5 }}>↑</button>
           </div>
         </div>
