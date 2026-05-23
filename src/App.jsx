@@ -239,6 +239,22 @@ export default function App() {
         body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
       });
     }
+
+    if (action.action === "add_rhythm_task" && rhythmData) {
+      const newRhythmTask = { id: "u" + Date.now(), label: action.label };
+      const updated = {
+        ...rhythmData,
+        tasks: {
+          ...rhythmData.tasks,
+          [action.day]: [...(rhythmData.tasks?.[action.day] || []), newRhythmTask],
+        },
+      };
+      setRhythmData(updated);
+      await fetch(`${SB_URL}/rest/v1/task_store`, {
+        method: "POST", headers,
+        body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
+      });
+    }
   };
 
   if (loading) return (

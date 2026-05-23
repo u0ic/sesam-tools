@@ -86,7 +86,10 @@ Supported actions:
 - complete_subtask: { action, taskId, subtaskId }
 - set_task_status: { action, taskId, status } (status: "Not started"|"In progress"|"Blocked"|"Done")
 - complete_care: { action, day, care } (care: exact care anchor label)
-- add_task: { action, phaseId, label, detail, role, deadline }
+- add_arch_task: { action, phaseId, label, detail, role, deadline } — for archaeology PhD work only
+- add_rhythm_task: { action, day, label } — for general daily tasks (meetings, errands, anything tied to a specific weekday)
+
+CRITICAL: If the user asks you to add something to their day or rhythm (meetings, calls, errands, etc), use add_rhythm_task. Only use add_arch_task for archaeology PhD work. Always emit the update block when the user asks you to make a change.
 
 Only include the update block when the user explicitly asks you to make a change. Otherwise just advise.
 
