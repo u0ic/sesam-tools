@@ -1,11 +1,7 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sesam-tools",
+  "pages_build_output_dir": "dist",
   "compatibility_date": "2026-05-23",
-  "assets": {
-    "not_found_handling": "single-page-application",
-    "directory": "./dist"
-  },
   "compatibility_flags": [
     "nodejs_compat"
   ]
