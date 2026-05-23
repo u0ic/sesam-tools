@@ -43,7 +43,7 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  // Load rhythm and task data once session is valid
+  // Load rhythm, task and chat data once session is valid
   useEffect(() => {
     if (!session?.access_token || typeof session.access_token !== "string") return;
     setDataLoaded(false);
@@ -56,10 +56,7 @@ export default function App() {
 
     const load = async () => {
       try {
-        const r1 = await fetch(
-          `${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`,
-          { headers }
-        );
+        const r1 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.rhythm_v1&select=value`, { headers });
         if (r1?.ok) {
           const d = await r1.json();
           if (d?.[0]?.value) setRhythmData(JSON.parse(d[0].value));
@@ -67,10 +64,7 @@ export default function App() {
       } catch {}
 
       try {
-        const r2 = await fetch(
-          `${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`,
-          { headers }
-        );
+        const r2 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.arch_task_state_v3&select=value`, { headers });
         if (r2?.ok) {
           const d = await r2.json();
           if (d?.[0]?.value) setTaskData(JSON.parse(d[0].value));
@@ -78,15 +72,12 @@ export default function App() {
       } catch {}
 
       try {
-      const r3 = await fetch(
-        `${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1&select=value`,
-        { headers }
-      );
-      if (r3?.ok) {
-        const d = await r3.json();
-        if (d?.[0]?.value) setMessages(JSON.parse(d[0].value));
-      }
-    } catch {}
+        const r3 = await fetch(`${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1&select=value`, { headers });
+        if (r3?.ok) {
+          const d = await r3.json();
+          if (d?.[0]?.value) setMessages(JSON.parse(d[0].value));
+        }
+      } catch {}
 
       setDataLoaded(true);
     };
@@ -135,6 +126,81 @@ export default function App() {
     setDataLoaded(false);
   };
 
+  // Pure function: takes current state + action, returns new state.
+  // Does NOT touch React state or Supabase directly.
+  const applyAction = (action, currentTask, currentRhythm) => {
+    let newTask = currentTask;
+    let newRhythm = currentRhythm;
+
+    if (action.action === "complete_subtask" && currentTask) {
+      newTask = {
+        ...currentTask,
+        subtasks: {
+          ...currentTask.subtasks,
+          [action.taskId]: (currentTask.subtasks?.[action.taskId] || []).map(s =>
+            s.id === action.subtaskId ? { ...s, done: true } : s
+          ),
+        },
+      };
+    }
+
+    if (action.action === "set_task_status" && currentTask) {
+      newTask = { ...currentTask, statuses: { ...currentTask.statuses, [action.taskId]: action.status } };
+    }
+
+    if (action.action === "complete_care" && currentRhythm) {
+      const key = `${action.day}:${action.care}`;
+      newRhythm = { ...currentRhythm, careDone: { ...currentRhythm.careDone, [key]: true } };
+    }
+
+    if (action.action === "add_arch_task" && currentTask) {
+      const newTaskItem = {
+        id: "t" + Date.now() + Math.random().toString(36).slice(2, 5),
+        label: action.label,
+        detail: action.detail || "",
+        role: action.role || "Other",
+        deadline: action.deadline || "",
+      };
+      newTask = {
+        ...currentTask,
+        phases: currentTask.phases.map(p =>
+          p.id === action.phaseId ? { ...p, tasks: [...p.tasks, newTaskItem] } : p
+        ),
+      };
+    }
+
+    if (action.action === "add_rhythm_task" && currentRhythm) {
+      const newRhythmTask = {
+        id: "u" + Date.now() + Math.random().toString(36).slice(2, 5),
+        label: action.label,
+      };
+      newRhythm = {
+        ...currentRhythm,
+        tasks: {
+          ...currentRhythm.tasks,
+          [action.day]: [...(currentRhythm.tasks?.[action.day] || []), newRhythmTask],
+        },
+      };
+    }
+
+    if (action.action === "add_subtask" && currentTask) {
+      const newSub = {
+        id: "s" + Date.now() + Math.random().toString(36).slice(2, 5),
+        label: action.label,
+        done: false,
+      };
+      newTask = {
+        ...currentTask,
+        subtasks: {
+          ...currentTask.subtasks,
+          [action.taskId]: [...(currentTask.subtasks?.[action.taskId] || []), newSub],
+        },
+      };
+    }
+
+    return { newTask, newRhythm };
+  };
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || thinking) return;
@@ -169,8 +235,12 @@ export default function App() {
 
       const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
       const updateMatches = [...raw.matchAll(/```update\s*([\s\S]*?)\s*```/g)];
-      const responseText = raw.replace(/```update\s*[\s\S]*?\s*```/g, "").trim();      setMessages(m => [...m, { role: "assistant", content: responseText }]);
+      const responseText = raw.replace(/```update\s*[\s\S]*?\s*```/g, "").trim();
+
+      setMessages(m => [...m, { role: "assistant", content: responseText }]);
       const finalMessages = [...newMessages, { role: "assistant", content: responseText }];
+
+      // Persist chat history
       try {
         await fetch(`${SB_URL}/rest/v1/task_store`, {
           method: "POST",
@@ -188,116 +258,48 @@ export default function App() {
         });
       } catch {}
 
+      // Apply all update blocks by chaining through local variables
+      if (updateMatches.length > 0) {
+        let workingTask = taskData;
+        let workingRhythm = rhythmData;
 
-      for (const match of updateMatches) {
-        try {
-          const action = JSON.parse(match[1]);
-          await applyAction(action);
-        } catch {}
+        for (const match of updateMatches) {
+          try {
+            const action = JSON.parse(match[1]);
+            const result = applyAction(action, workingTask, workingRhythm);
+            workingTask = result.newTask;
+            workingRhythm = result.newRhythm;
+          } catch {}
+        }
+
+        const headers = {
+          apikey: SB_KEY,
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        };
+
+        if (workingTask !== taskData) {
+          setTaskData(workingTask);
+          await fetch(`${SB_URL}/rest/v1/task_store`, {
+            method: "POST", headers,
+            body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(workingTask), updated_at: new Date().toISOString() }),
+          });
+        }
+
+        if (workingRhythm !== rhythmData) {
+          setRhythmData(workingRhythm);
+          await fetch(`${SB_URL}/rest/v1/task_store`, {
+            method: "POST", headers,
+            body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(workingRhythm), updated_at: new Date().toISOString() }),
+          });
+        }
       }
     } catch (e) {
       setMessages(m => [...m, { role: "assistant", content: `Network error: ${e.message}` }]);
     }
 
     setThinking(false);
-  };
-
-  const applyAction = async (action) => {
-    const headers = {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates",
-    };
-
-    if (action.action === "complete_subtask" && taskData) {
-      const updated = {
-        ...taskData,
-        subtasks: {
-          ...taskData.subtasks,
-          [action.taskId]: (taskData.subtasks?.[action.taskId] || []).map(s =>
-            s.id === action.subtaskId ? { ...s, done: true } : s
-          ),
-        },
-      };
-      setTaskData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
-
-    if (action.action === "set_task_status" && taskData) {
-      const updated = { ...taskData, statuses: { ...taskData.statuses, [action.taskId]: action.status } };
-      setTaskData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
-
-    if (action.action === "complete_care" && rhythmData) {
-      const key = `${action.day}:${action.care}`;
-      const updated = { ...rhythmData, careDone: { ...rhythmData.careDone, [key]: true } };
-      setRhythmData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
-
-    if (action.action === "add_task" && taskData) {
-      const newTask = {
-        id: "t" + Date.now(),
-        label: action.label,
-        detail: action.detail || "",
-        role: action.role || "Other",
-        deadline: action.deadline || "",
-      };
-      const updated = {
-        ...taskData,
-        phases: taskData.phases.map(p =>
-          p.id === action.phaseId ? { ...p, tasks: [...p.tasks, newTask] } : p
-        ),
-      };
-      setTaskData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
-
-    if (action.action === "add_rhythm_task" && rhythmData) {
-      const newRhythmTask = { id: "u" + Date.now(), label: action.label };
-      const updated = {
-        ...rhythmData,
-        tasks: {
-          ...rhythmData.tasks,
-          [action.day]: [...(rhythmData.tasks?.[action.day] || []), newRhythmTask],
-        },
-      };
-      setRhythmData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
-
-    if (action.action === "add_subtask" && taskData) {
-      const newSub = { id: "s" + Date.now(), label: action.label, done: false };
-      const updated = {
-        ...taskData,
-        subtasks: {
-          ...taskData.subtasks,
-          [action.taskId]: [...(taskData.subtasks?.[action.taskId] || []), newSub],
-        },
-      };
-      setTaskData(updated);
-      await fetch(`${SB_URL}/rest/v1/task_store`, {
-        method: "POST", headers,
-        body: JSON.stringify({ key: "arch_task_state_v3", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
-      });
-    }
   };
 
   if (loading) return (
@@ -326,7 +328,6 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", padding: "1rem", fontFamily: "sans-serif" }}>
-      {/* Nav */}
       <div style={{ display: "flex", gap: 8, marginBottom: "1.5rem", alignItems: "center" }}>
         <button onClick={() => setView("rhythm")}
           style={{ flex: 1, padding: "8px", borderRadius: 8, border: "0.5px solid #ddd", background: view === "rhythm" ? "#f0f0f0" : "none", cursor: "pointer", fontSize: 13 }}>
@@ -346,16 +347,13 @@ export default function App() {
         ? <DailyRhythm token={session.access_token} />
         : <TaskManager token={session.access_token} />}
 
-      {/* Floating pikmin button */}
       <button onClick={() => setChatOpen(o => !o)}
         style={{ position: "fixed", bottom: 24, right: 24, width: 56, height: 56, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", padding: 0, zIndex: 50 }}>
         <img src={PIKMIN_IMG} alt="Open Sesam" style={{ width: 56, height: 56, objectFit: "contain", filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.25))" }} />
       </button>
 
-      {/* Chat panel */}
       {chatOpen && (
         <div style={{ position: "fixed", bottom: 90, right: 24, width: 340, maxHeight: "70vh", borderRadius: 16, background: "rgba(255,255,255,0.88)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: "0.5px solid #e0e0e0", boxShadow: "0 4px 32px rgba(0,0,0,0.12)", display: "flex", flexDirection: "column", zIndex: 50 }}>
-          {/* Header */}
           <div style={{ padding: "12px 16px", borderBottom: "0.5px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 13, fontWeight: 500 }}>Sesam</span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -378,7 +376,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Messages */}
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
             {messages.length === 0 && (
               <p style={{ fontSize: 13, color: "#aaa", margin: 0, lineHeight: 1.6 }}>
@@ -402,7 +399,6 @@ export default function App() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Input */}
           <div style={{ padding: "10px 12px", borderTop: "0.5px solid #eee", display: "flex", gap: 8 }}>
             <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
