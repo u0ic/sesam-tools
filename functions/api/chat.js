@@ -101,7 +101,7 @@ Tone: warm, direct, honest. Same register as a trusted colleague who knows you w
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: systemPrompt,
       messages,
