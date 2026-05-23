@@ -77,6 +77,17 @@ export default function App() {
         }
       } catch {}
 
+      try {
+      const r3 = await fetch(
+        `${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1&select=value`,
+        { headers }
+      );
+      if (r3?.ok) {
+        const d = await r3.json();
+        if (d?.[0]?.value) setMessages(JSON.parse(d[0].value));
+      }
+    } catch {}
+
       setDataLoaded(true);
     };
 
@@ -161,6 +172,23 @@ export default function App() {
       const responseText = raw.replace(/```update\n[\s\S]*?```/, "").trim();
 
       setMessages(m => [...m, { role: "assistant", content: responseText }]);
+      const finalMessages = [...newMessages, { role: "assistant", content: responseText }];
+      try {
+        await fetch(`${SB_URL}/rest/v1/task_store`, {
+          method: "POST",
+          headers: {
+            apikey: SB_KEY,
+            Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates",
+          },
+          body: JSON.stringify({
+            key: "chat_messages_v1",
+            value: JSON.stringify(finalMessages),
+            updated_at: new Date().toISOString(),
+          }),
+        });
+      } catch {}
 
       if (updateMatch) {
         try {
@@ -255,7 +283,7 @@ export default function App() {
         body: JSON.stringify({ key: "rhythm_v1", value: JSON.stringify(updated), updated_at: new Date().toISOString() }),
       });
     }
-    
+
     if (action.action === "add_subtask" && taskData) {
       const newSub = { id: "s" + Date.now(), label: action.label, done: false };
       const updated = {
@@ -334,6 +362,19 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {!dataLoaded && <span style={{ fontSize: 11, color: "#aaa" }}>Loading data…</span>}
               {dataLoaded && <span style={{ fontSize: 11, color: "#1a7a45" }}>✓ Data ready</span>}
+              <button onClick={async () => {
+                if (!confirm("Clear conversation history?")) return;
+                setMessages([]);
+                try {
+                  await fetch(`${SB_URL}/rest/v1/task_store?key=eq.chat_messages_v1`, {
+                    method: "DELETE",
+                    headers: {
+                      apikey: SB_KEY,
+                      Authorization: `Bearer ${session.access_token}`,
+                    },
+                  });
+                } catch {}
+              }} style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 11 }}>Clear</button>
               <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 16 }}>✕</button>
             </div>
           </div>
