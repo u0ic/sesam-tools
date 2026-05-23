@@ -168,9 +168,8 @@ export default function App() {
       }
 
       const raw = data.content?.[0]?.text || "Sorry, something went wrong.";
-      const updateMatch = raw.match(/```update\n([\s\S]*?)```/);
-      const responseText = raw.replace(/```update\n[\s\S]*?```/, "").trim();
-
+      const updateMatches = [...raw.matchAll(/```update\n([\s\S]*?)```/g)];
+      const responseText = raw.replace(/```update\n[\s\S]*?```/g, "").trim();
       setMessages(m => [...m, { role: "assistant", content: responseText }]);
       const finalMessages = [...newMessages, { role: "assistant", content: responseText }];
       try {
@@ -190,9 +189,10 @@ export default function App() {
         });
       } catch {}
 
-      if (updateMatch) {
+
+      for (const match of updateMatches) {
         try {
-          const action = JSON.parse(updateMatch[1]);
+          const action = JSON.parse(match[1]);
           await applyAction(action);
         } catch {}
       }
