@@ -37,8 +37,10 @@ export async function onRequestPost(context) {
 
   const res = await fetch(url.toString());
   const data = await res.json();
+  console.log("Google Maps response:", JSON.stringify(data));
 
   if (data.status !== "OK") {
+    console.error("Google Maps error:", data.status, JSON.stringify(data));
     return new Response(JSON.stringify({ error: data.status, details: data }), {
       status: 500, headers: { "Content-Type": "application/json" },
     });
