@@ -97,7 +97,7 @@ export default function App() {
         localStorage.setItem("sb_session", JSON.stringify(data));
         setSession(data);
       }
-    } catch (e) {
+    } catch {
       setAuthError("Network error — check your connection");
     }
     setSigningIn(false);
@@ -141,7 +141,7 @@ export default function App() {
         try {
           const action = JSON.parse(updateMatch[1]);
           await applyAction(action);
-        } catch (e) {
+        } catch {
           console.error("Error parsing update block:", e);
         }
       }
