@@ -110,7 +110,8 @@ Tone: warm, direct, honest. Same register as a trusted colleague who knows you w
 
   if (!anthropicRes.ok) {
     const err = await anthropicRes.text();
-    return new Response(JSON.stringify({ error: err }), {
+    console.error("Anthropic error:", anthropicRes.status, err);
+    return new Response(JSON.stringify({ error: err, status: anthropicRes.status }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });

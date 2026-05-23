@@ -69,7 +69,9 @@ export default function App() {
         ]);
         if (r1.ok) { const d = await r1.json(); if (d[0]) setRhythmData(JSON.parse(d[0].value)); }
         if (r2.ok) { const d = await r2.json(); if (d[0]) setTaskData(JSON.parse(d[0].value)); }
-      } catch {}
+      } catch (e) {
+        console.error("Error loading data:", e);
+      }
     };
     load();
   }, [session, chatOpen]);
@@ -90,7 +92,9 @@ export default function App() {
         localStorage.setItem("sb_session", JSON.stringify(data));
         setSession(data);
       }
-    } catch { setAuthError("Network error — check your connection"); }
+    } catch (e) {
+      setAuthError("Network error — check your connection");
+    }
     setSigningIn(false);
   };
 
@@ -132,10 +136,12 @@ export default function App() {
         try {
           const action = JSON.parse(updateMatch[1]);
           await applyAction(action);
-        } catch {}
+        } catch (e) {
+          console.error("Error parsing update block:", e);
+        }
       }
-    } catch {
-      setMessages(m => [...m, { role: "assistant", content: "Something went wrong. Check your connection." }]);
+    } catch (e) {
+      setMessages(m => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
     }
     setThinking(false);
   };
