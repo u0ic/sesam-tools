@@ -55,16 +55,6 @@ const DEFAULT_FOCUSES = {
   Thursday:"admin", Friday:"admin", Saturday:"space", Sunday:"phd",
 };
 
-const NEXT_LOGIC = {
-  Monday:    ["Check MPIWG emails first","One admin task, then stop","Eat before leaving"],
-  Tuesday:   ["Open the Wang Shixian draft","Write for 45 min before checking anything","Eat lunch before 14:00"],
-  Wednesday: ["Zoom seminar prep if needed","One paragraph on Liu Heima","Rest after Zoom"],
-  Thursday:  ["MPIWG, then Butoh — that's enough","No PhD work today","Eat before Butoh"],
-  Friday:    ["MPIWG only — rest after","No new tasks this evening","Wind down by 23:00"],
-  Saturday:  ["GelisPark first","Flexibility class at 14:30","One small admin task max"],
-  Sunday:    ["Quiet morning — PhD writing only","No admin today","Rest by evening"],
-};
-
 function uid() { return "u" + Date.now() + Math.random().toString(36).slice(2, 5); }
 
 function todayName() {
@@ -83,7 +73,87 @@ function isPast(timeStr, day) {
   return nowMinutes > endMinutes;
 }
 
-export default function DailyRhythm({ token }) {
+// Compute "What's next?" suggestions based on actual current state
+function computeNextSteps(day, fixedAnchors, tasks, taskDone, careDone, focuses) {
+  const suggestions = [];
+  const isToday = day === todayName();
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const focus = focuses?.[day] || "free";
+
+  // For non-today days: structural overview
+  if (!isToday) {
+    const anchorCount = (fixedAnchors[day] || []).length;
+    const taskCount = (tasks[day] || []).length;
+    if (anchorCount > 0) suggestions.push(`${anchorCount} fixed anchor${anchorCount > 1 ? "s" : ""} planned`);
+    if (taskCount > 0) suggestions.push(`${taskCount} task${taskCount > 1 ? "s" : ""} planned`);
+    suggestions.push(`Focus: ${FOCUS_OPTIONS[focus] || focus}`);
+    return suggestions.slice(0, 3);
+  }
+
+  // Find next upcoming fixed anchor (starts in <3hrs from now)
+  const todayFixed = fixedAnchors[day] || [];
+  const upcoming = todayFixed
+    .map(f => {
+      const m = f.h?.match(/(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return { ...f, startMin };
+    })
+    .filter(f => f && f.startMin > nowMinutes && (f.startMin - nowMinutes) <= 180)
+    .sort((a, b) => a.startMin - b.startMin);
+
+  if (upcoming.length > 0) {
+    const next = upcoming[0];
+    const mins = next.startMin - nowMinutes;
+    const timeWord = mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}min`;
+    suggestions.push(`${next.t} in ${timeWord}`);
+  }
+
+  // Care nudges based on time of day
+  const careStatus = (label) => careDone[`${day}:${label}`];
+  if (nowMinutes < 13 * 60 && !careStatus("Breakfast — before anything else")) {
+    suggestions.push("Eat breakfast before starting anything else");
+  } else if (nowMinutes >= 13 * 60 && nowMinutes < 16 * 60 && !careStatus("Lunch")) {
+    suggestions.push("Lunch — eat before pushing on");
+  } else if (nowMinutes >= 19 * 60 && nowMinutes < 22 * 60 && !careStatus("Dinner with partner")) {
+    suggestions.push("Dinner with partner");
+  } else if (nowMinutes >= 22 * 60 && !careStatus("Wind down — close tasks by 23:00")) {
+    suggestions.push("Start winding down — close work by 23:00");
+  }
+
+  // Suggest based on focus + outstanding tasks
+  const dayTasks = (tasks[day] || []).filter(t => !taskDone[t.id]);
+  if (dayTasks.length > 0 && nowMinutes < 22 * 60) {
+    if (focus === "phd") {
+      suggestions.push(dayTasks.length === 1 ? `Work on: ${dayTasks[0].label}` : `${dayTasks.length} tasks — pick one to start with`);
+    } else if (focus === "study") {
+      suggestions.push("Topology / ML — open the notes first, decide what next once they're open");
+    } else if (focus === "admin") {
+      suggestions.push(dayTasks.length === 1 ? dayTasks[0].label : `${dayTasks.length} tasks today — start with the smallest`);
+    } else if (dayTasks.length > 0) {
+      suggestions.push(`${dayTasks.length} task${dayTasks.length > 1 ? "s" : ""} pending`);
+    }
+  }
+
+  // Wangwang nudge — early/midday or evening
+  if (!careStatus("Time with Wangwang — 5 to 15 min") && nowMinutes < 22 * 60) {
+    suggestions.push("5 minutes with Wangwang — costs nothing");
+  }
+
+  // Default if nothing specific
+  if (suggestions.length === 0) {
+    if (nowMinutes >= 22 * 60) {
+      suggestions.push("You've done enough today — rest");
+    } else {
+      suggestions.push("You're on track. Take a breath.");
+    }
+  }
+
+  return suggestions.slice(0, 4);
+}
+
+export default function DailyRhythm({ token, askSesam }) {
   const SB_HEADERS = { apikey: "sb_publishable_vmYb05jf9S6GH5Sp41Ztiw_q34PUyKb", Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [day, setDay] = useState(todayName());
@@ -96,11 +166,12 @@ export default function DailyRhythm({ token }) {
   const [showNext, setShowNext] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("saved");
-  const [editingFixed, setEditingFixed] = useState(null); // null | day name
+  const [editingFixed, setEditingFixed] = useState(null);
+  const [aiSuggestion, setAiSuggestion] = useState("");
+  const [askingAi, setAskingAi] = useState(false);
   const [, setTick] = useState(0);
   const inputRef = useRef();
 
-  // Check day change and force re-render every minute
   useEffect(() => {
     const interval = setInterval(() => {
       const current = todayName();
@@ -129,6 +200,11 @@ export default function DailyRhythm({ token }) {
       setLoaded(true);
     })();
   }, []);
+
+  // Reset AI suggestion when day changes
+  useEffect(() => {
+    setAiSuggestion("");
+  }, [day]);
 
   const persist = async (fo, ta, td, cd, fa) => {
     setSyncStatus("saving");
@@ -176,28 +252,18 @@ export default function DailyRhythm({ token }) {
     setCareDone(cd); persist(focuses, tasks, taskDone, cd, fixedAnchors);
   };
 
-  // Fixed anchor editing
   const addAnchor = (dayName) => {
-    const fa = {
-      ...fixedAnchors,
-      [dayName]: [...(fixedAnchors[dayName] || []), { t: "New item", h: "", kind: "work" }],
-    };
+    const fa = { ...fixedAnchors, [dayName]: [...(fixedAnchors[dayName] || []), { t: "New item", h: "", kind: "work" }] };
     setFixedAnchors(fa); persist(focuses, tasks, taskDone, careDone, fa);
   };
 
   const updateAnchor = (dayName, index, field, value) => {
-    const fa = {
-      ...fixedAnchors,
-      [dayName]: fixedAnchors[dayName].map((a, i) => i === index ? { ...a, [field]: value } : a),
-    };
+    const fa = { ...fixedAnchors, [dayName]: fixedAnchors[dayName].map((a, i) => i === index ? { ...a, [field]: value } : a) };
     setFixedAnchors(fa); persist(focuses, tasks, taskDone, careDone, fa);
   };
 
   const deleteAnchor = (dayName, index) => {
-    const fa = {
-      ...fixedAnchors,
-      [dayName]: fixedAnchors[dayName].filter((_, i) => i !== index),
-    };
+    const fa = { ...fixedAnchors, [dayName]: fixedAnchors[dayName].filter((_, i) => i !== index) };
     setFixedAnchors(fa); persist(focuses, tasks, taskDone, careDone, fa);
   };
 
@@ -207,12 +273,23 @@ export default function DailyRhythm({ token }) {
     setFixedAnchors(fa); persist(focuses, tasks, taskDone, careDone, fa);
   };
 
+  const requestAiPlan = async () => {
+    if (!askSesam) return;
+    setAskingAi(true);
+    setAiSuggestion("");
+    const prompt = `It's ${new Date().toLocaleString("en-GB", { weekday: "long", hour: "2-digit", minute: "2-digit" })}. Looking at my day, what should I focus on for the next 1-2 hours? Be concrete and brief — 3-5 sentences. No update blocks, no commute lookups, just direct advice. Reference specific items from my fixed anchors, tasks, or care list.`;
+    const result = await askSesam(prompt);
+    setAiSuggestion(result || "Couldn't reach Sesam right now.");
+    setAskingAi(false);
+  };
+
   const dayTasks = tasks[day] || [];
   const doneTasks = dayTasks.filter(t => taskDone[t.id]).length;
   const focusVal = focuses[day] || "free";
   const fixed = fixedAnchors[day] || [];
   const careKeys = CARE_ANCHORS.map(c => `${day}:${c}`);
   const careDoneCount = careKeys.filter(k => careDone[k]).length;
+  const nextSteps = computeNextSteps(day, fixedAnchors, tasks, taskDone, careDone, focuses);
 
   if (!loaded) return <div style={{ padding: "2rem", fontSize: 14, color: "#888" }}>Loading…</div>;
 
@@ -225,7 +302,7 @@ export default function DailyRhythm({ token }) {
           const isToday = d === todayName();
           const isSel = d === day;
           return (
-            <button key={d} onClick={() => { setDay(d); setShowNext(false); }}
+            <button key={d} onClick={() => { setDay(d); setShowNext(false); setAiSuggestion(""); }}
               style={{ fontSize: 12, padding: "4px 10px", borderRadius: 8,
                 border: isSel ? "0.5px solid #333" : "0.5px solid #ddd",
                 background: isSel ? "#f0f0f0" : "none",
@@ -251,11 +328,33 @@ export default function DailyRhythm({ token }) {
         {showNext && (
           <div style={{ marginTop: 8, padding: "12px 16px", borderRadius: 12,
             border: "0.5px solid #eee", background: "#fafafa" }}>
-            {(NEXT_LOGIC[day] || []).map((n, i) => (
+            {nextSteps.map((n, i) => (
               <p key={i} style={{ margin: i === 0 ? "0 0 8px" : "8px 0", fontSize: 13, color: "#222", lineHeight: 1.6 }}>
                 <span style={{ color: "#bbb", marginRight: 8 }}>{i + 1}.</span>{n}
               </p>
             ))}
+
+            {/* Ask Sesam button + result */}
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "0.5px dashed #ddd" }}>
+              {!aiSuggestion && (
+                <button onClick={requestAiPlan} disabled={askingAi || !askSesam}
+                  style={{ width: "100%", padding: "8px 12px", fontSize: 12, borderRadius: 8,
+                    border: "0.5px solid #ddd", background: "none", cursor: "pointer", color: "#666",
+                    opacity: askingAi ? 0.6 : 1 }}>
+                  {askingAi ? "Sesam is thinking…" : "Ask Sesam for a deeper plan"}
+                </button>
+              )}
+              {aiSuggestion && (
+                <div>
+                  <p style={{ fontSize: 11, color: "#888", marginBottom: 6 }}>Sesam:</p>
+                  <p style={{ fontSize: 13, color: "#222", lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }}>{aiSuggestion}</p>
+                  <button onClick={requestAiPlan}
+                    style={{ marginTop: 8, fontSize: 11, color: "#888", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                    ↻ Ask again
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

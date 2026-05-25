@@ -12,10 +12,12 @@ Agreed to do a PhD on how archaeology as a form of knowledge production evolved 
 Runs a collective project space in Berlin called GelisPark.
 Has chronic depression and ADHD — difficulty with task initiation, hyperfocus, time blindness.
 Partner lives with them, works three jobs, has anxiety.
-Cat named Wangwang (王佩瑜), a 三花猫 with 异瞳.
+Cat named Wangwang (汪佩瑜), a 三花猫 with 异瞳.
 Plays Pikmin Bloom with partner.
 Sleep pattern: bed around 2-3am, wakes around 11am. Wants to improve this gradually.
-Works best in long uninterrupted sessions; first 10-15 min feel resistant.`;
+Works best in long uninterrupted sessions; first 10-15 min feel resistant.
+bike communite from home to sbahn treptower park, sbahn plänterwald. 
+From home to gelispark, flexibility, glogauerstr, also by bike`;
 
 const DEFAULT_LOCATIONS = `Home: Treptower Park, Berlin
 MPIWG: Boltzmannstraße 22, 14195 Berlin
@@ -309,7 +311,31 @@ export default function App() {
       return `Commute lookup error: ${e.message}`;
     }
   };
-
+  // One-shot AI call without affecting chat history
+  const askSesam = async (prompt) => {
+    if (!session?.access_token) return null;
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: prompt }],
+          rhythmData, taskData,
+          profile, locations, projects,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const raw = data.content?.[0]?.text || "";
+      return raw
+        .replace(/```update\s*[\s\S]*?\s*```/g, "")
+        .replace(/```commute\s*[\s\S]*?\s*```/g, "")
+        .trim();
+    } catch { return null; }
+  };
   const sendMessage = async (overrideText) => {
     const text = (overrideText !== undefined ? overrideText : input).trim();
     if (!text || thinking) return;
@@ -502,7 +528,7 @@ export default function App() {
         </button>
       </div>
 
-      {view === "rhythm" && <DailyRhythm token={session.access_token} />}
+      {view === "rhythm" && <DailyRhythm token={session.access_token} askSesam={askSesam} />}
       {view === "tasks" && <TaskManager token={session.access_token} />}
       {view === "context" && (
         <div style={{ padding: "1rem 0" }}>
